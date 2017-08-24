@@ -1,0 +1,22 @@
+{
+  "name": "nodejse",
+  "version": "1.0.2",
+  "description": "Node JSE",
+  "main": "jseServer.js",
+  "dependencies": {
+    "dict": "~1.4.0",
+    "moment": "~2.18.1",
+    "underscore": "~1.8.3",
+    "queue": "~4.2.1",
+    "request": "~2.81.0",
+    "int64-buffer":"~0.1.9"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/slixin/nodeJse.git"
+  },
+  "devDependencies": {},
+  "scripts": {},
+  "author": "Steve Li",
+  "license": "ISC"
+}
