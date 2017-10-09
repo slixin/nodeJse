@@ -107,13 +107,13 @@ function JseServer(port, dictionary, options, accounts) {
                 session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
                 session.stopHeartBeat();
                 session.isLoggedIn = false;
+                self.emit('close', { account: session.account });
                 if (session.account != undefined) {
                     var client_name = session.account;
                     if (self.clients.has(client_name)) {
                         self.clients.delete(client_name);
                     }
                 }
-                self.emit('close', { account: session.account });
             });
 
             // Logon event

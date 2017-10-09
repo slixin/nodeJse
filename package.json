@@ -1,6 +1,6 @@
 {
   "name": "nodejse",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "description": "Node JSE",
   "main": "jseServer.js",
   "dependencies": {
