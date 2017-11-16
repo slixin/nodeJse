@@ -200,10 +200,9 @@ function JseSession(opt, accs) {
         self.emit('state', msg);
     }
 
-    //internal methods (non-public)
     this._endSession = function() {
         clearInterval(self.heartbeatIntervalID);
-        self.emit('endsession');
+        self.emit('endsession', self.account);
     }
 }
 util.inherits(JseSession, events.EventEmitter);

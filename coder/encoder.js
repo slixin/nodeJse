@@ -7,13 +7,13 @@ var convertToJSE = exports.convertToJSE = function(msgraw, spec) {
     var outmsg = null;
     // Get message definition by type
     var msg_def = _getMessageSpec(spec, msg_type);
+
     if (msg_def != undefined) {
         var bodyLength = _getMsgBodyLength(msg_def);
         outmsg = Buffer.alloc(bodyLength+3);
         outmsg.write(String.fromCharCode(2));
         outmsg.writeUInt16LE(bodyLength, 1);
         outmsg.write(msg_type,3);
-
         if ('_fields' in msg_def) {
             _encodeMsgBody(outmsg, msg_def._fields, msgraw);
         }

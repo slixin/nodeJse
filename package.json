@@ -1,8 +1,8 @@
 {
   "name": "nodejse",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Node JSE",
-  "main": "jseServer.js",
+  "main": "index.js",
   "dependencies": {
     "dict": "~1.4.0",
     "moment": "~2.18.1",

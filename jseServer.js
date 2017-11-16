@@ -2,8 +2,7 @@ var util = require('util');
 var net = require('net');
 var events = require('events');
 var jseutils = require('./jseutils.js');
-var JseSession = require('./jseSession.js');
-var JseServerSocket = require('./jseServerSocket.js');
+var JseSession = require('./jseServerSession.js');
 var JseDataProcessor = require('./jseDataProcessor.js');
 var Coder = require('./coder/index.js');
 var queue = require('queue');
@@ -23,11 +22,64 @@ function JseServer(port, dictionary, options, accounts) {
     self.dictionary = dictionary;
     self.accounts = accounts;
     self.clients = dict();
+    self.client_account_mapping = dict();
 
-    var jseSocket = new JseServerSocket();
-    var outMsgQueue = queue();
-    outMsgQueue.autostart = true;
     var jseCoder = new Coder(dictionary);
+
+    accounts.forEach(function(account) {
+        var session = new JseSession(_.clone(self.options), self.accounts);
+
+        // Logon event
+        session.on('logon', function(msg) {
+            var account = msg.account;
+            self.emit('logon', msg);
+        });
+
+        // Handle outbound message
+        session.on('outmsg', function(msg) {
+            var account = msg.account;
+            var outmsg = jseCoder.encode(msg.message);
+            if (self.clients.has(account)) {
+                var client = self.clients.get(account);
+                if (client.socket != undefined) {
+                    client.socket.write(outmsg);
+                    self.emit('outmsg', msg);
+                } else {
+                    self.emit('error', {error: 'Socket is null.', account: account });
+                }
+            }
+        });
+
+        // Inbound message Event
+        session.on('msg', function(msg) {
+            self.emit('msg', msg);
+        });
+
+        // Session end Event
+        session.on('endsession', function(account) {
+            session.stopHeartBeat();
+            session.isLoggedIn = false;
+            session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
+            if (self.clients.has(account)) {
+                var sock = self.clients.get(account).socket
+                sock.end();
+                sock = null;
+            }
+            self.emit('endsession');
+        });
+
+        // Session State event
+        session.on('state', function(msg) {
+            self.emit('state', msg);
+        });
+
+        var client = {
+            session: session,
+            socket: null
+        }
+
+        self.clients.set(account.username, client);
+    })
 
     this.destroyConnection = function(){
         if (self.server != undefined){
@@ -40,10 +92,27 @@ function JseServer(port, dictionary, options, accounts) {
         }
     }
 
+    this.modifyBehavior = function(client, data) {
+        if (self.clients.has(client)) {
+            var session = self.clients.get(client).session;
+            session.modifyBehavior(data);
+        }
+    }
+
+    this.getOptions = function(client) {
+        var options = null;
+
+        if (self.clients.has(client)) {
+            var session = self.clients.get(client).session;
+            options = session.options;
+        }
+        return options;
+    }
+
     // Send message
-    this.sendMsg = function(msg, account, object, callback) {
-        if (self.clients.has(account)) {
-            var session = self.clients.get(account).session;
+    this.sendMsg = function(msg, client, object, callback) {
+        if (self.clients.has(client)) {
+            var session = self.clients.get(client).session;
             var jsemsg = null;
             if (typeof msg == "string") {
                 jsemsg = jseCoder.decodetext(msg, ",");
@@ -58,36 +127,36 @@ function JseServer(port, dictionary, options, accounts) {
         }
     }
 
-    this.modifyBehavior = function(account, data) {
-        if (self.clients.has(account)) {
-            var session = self.clients.get(account).session;
-            session.modifyBehavior(data);
-        }
-    }
-
-    this.getOptions = function(account) {
-        var options = null;
-
-        if (self.clients.has(account)) {
-            var session = self.clients.get(account).session;
-            options = session.options;
-        }
-        return options;
-    }
-
     this.createServer = function(callback) {
         self.server = net.createServer();
 
         self.server.on('connection', function(socket) {
-            var session = new JseSession(_.clone(self.options), self.accounts);
+            socket.id = socket.remoteAddress + ":" + socket.remotePort;
             var jseDataProcessor = new JseDataProcessor();
 
             // Handle Incoming jse message Event
             jseDataProcessor.on('msg', function(jsemsg) {
+                var account = null;
+
                 // Decode jse binary message to jse Object
                 var jse = jseCoder.decode(jsemsg);
-                // Process incoming jse message in Session
-                session.processIncomingMsg(jse);
+
+                if (self.client_account_mapping.has(socket.id)) {
+                    account = self.client_account_mapping.get(socket.id);
+                }
+
+                if (jse.hasOwnProperty('CompID')) {
+                    account = jse['CompID'];
+                    self.client_account_mapping.set(socket.id, account);
+                }
+
+                if (self.clients.has(account)) {
+                    var client = self.clients.get(account);
+                    var session = client.session;
+                    client.socket = socket;
+                    // Process incoming jse message in Session
+                    session.processIncomingMsg(jse);
+                }
             });
 
             // Data process error Event
@@ -104,61 +173,27 @@ function JseServer(port, dictionary, options, accounts) {
             });
 
             socket.on('close', function() {
-                session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
-                session.stopHeartBeat();
-                session.isLoggedIn = false;
-                self.emit('close', { account: session.account });
-                if (session.account != undefined) {
-                    var client_name = session.account;
-                    if (self.clients.has(client_name)) {
-                        self.clients.delete(client_name);
+                var session = null;
+                var account = null;
+                self.clients.forEach(function(value, key) {
+                    var client = value;
+                    if (client.socket != undefined) {
+                        if (client.socket.id == socket.id) {
+                            session = client.session;
+                            account = key;
+                            client.socket = null;
+                            return;
+                        }
                     }
+                });
+
+                if (session != undefined) {
+                    session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
+                    session.stopHeartBeat();
+                    session.isLoggedIn = false;
                 }
-            });
 
-            // Logon event
-            session.on('logon', function(msg) {
-                if (msg.account != undefined) {
-                    session.account = msg.account;
-                    var client_name = session.account;
-                    if (!self.clients.has(client_name)) {
-                        self.clients.set(client_name, { session: session, socket: socket} );
-                    }
-                }
-                self.emit('logon', msg);
-            });
-
-            // Handle outbound message
-            session.on('outmsg', function(msg) {
-                var outmsg = jseCoder.encode(msg.message);
-                outMsgQueue.push(function(cb) {
-                    socket.write(outmsg);
-                    self.emit('outmsg', msg);
-                })
-            });
-
-            // Inbound message Event
-            session.on('msg', function(msg) {
-                self.emit('msg', msg);
-            });
-
-            // Session end Event
-            session.on('endsession', function() {
-                session.stopHeartBeat();
-                session.isLoggedIn = false;
-                session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
-                if (session.account != undefined) {
-                    var client_name = session.account;
-                    if (self.clients.has(client_name)) {
-                        self.clients.delete(client_name);
-                    }
-                }
-                self.emit('endsession', { account: session.account });
-            });
-
-            // Session State event
-            session.on('state', function(msg) {
-                self.emit('state', msg);
+                self.emit('close', { account: account });
             });
         });
 
@@ -172,7 +207,5 @@ function JseServer(port, dictionary, options, accounts) {
         });
     };
 }
-
-
 
 util.inherits(JseServer, events.EventEmitter);
